@@ -1,87 +1,49 @@
-<?php 
+<?php
 
-namespace Admin;
+namespace Helper;
 
-class Seller extends \Home {
+class Crypt {
 
-	protected
-		$seller;
+    private $key;
 
-	function beforeRoute($f3) {
-		parent::beforeRoute($f3);
-		if ( ! $this->me->isAdmin()) $f3->reroute('/logout');
-		$this->seller = new \User;
-	}
+    function __construct($key){
+        $this->setKey($key);
+    }
 
-	function All($f3) {
-		$sellers = $this->seller->find('type=2');
-		$f3->set('sellers',$sellers);
-		$f3->set('subcontent','admin/sellers.html');
-	}
+    public function encrypt($encrypt){
+        $encrypt = serialize($encrypt);
+        $iv = mcrypt_create_iv(mcrypt_get_iv_size(MCRYPT_RIJNDAEL_256, MCRYPT_MODE_CBC), MCRYPT_DEV_URANDOM);
+        $key = pack('H*', $this->key);
+        $mac = hash_hmac('sha256', $encrypt, substr($this->key, -32));
+        $passcrypt = mcrypt_encrypt(MCRYPT_RIJNDAEL_256, $key, $encrypt . $mac, MCRYPT_MODE_CBC, $iv);
+        $encoded = base64_encode($passcrypt) . '|' . base64_encode($iv);
+        return $encoded;
+    }
 
-	function loadSeller() {
-		$f3 = \Base::instance();
-		$seller = $this->seller;
-		if ($f3->exists('PARAMS.id')) {
-			$id = $f3->get('PARAMS.id');
-			$seller->load(array('id=? AND type=2',$id));
-			$seller->reroute('/home/admin/seller');
-		}
-		return $seller;
-	}
+    public function decrypt($decrypt){
+        $decrypt = explode('|', $decrypt.'|');
+        $decoded = base64_decode($decrypt[0]);
+        $iv = base64_decode($decrypt[1]);
+        if(strlen($iv)!==mcrypt_get_iv_size(MCRYPT_RIJNDAEL_256, MCRYPT_MODE_CBC)){ return false; }
+        $key = pack('H*', $this->key);
+        $decrypted = trim(mcrypt_decrypt(MCRYPT_RIJNDAEL_256, $key, $decoded, MCRYPT_MODE_CBC, $iv));
+        $mac = substr($decrypted, -64);
+        $decrypted = substr($decrypted, 0, -64);
+        $calcmac = hash_hmac('sha256', $decrypted, substr($this->key, -32));
+        if($calcmac !== $mac){
+            return false;
+        }
+        $decrypted = unserialize($decrypted);
+        return $decrypted;
+    }
 
-	function Id($f3) {
-		$seller = $this->loadSeller();
-		$f3->set('seller',$seller);
-		$f3->set('subcontent','admin/seller.html');
-	}
-
-	function Set($f3) {
-		$seller = $this->loadSeller();
-		if ($seller->dry()) {
-			$seller->load(array('username=?',$f3->get('POST.username')));
-			if ( ! $seller->dry()) {
-				$this->flash('User sudah terdaftar');
-				$f3->reroute('/home/admin/seller/add');
-			}
-		}
-		$seller->copyFrom('POST');
-		if ($f3->exists('POST.password',$pass)) {
-			if ( ! \Check::Confirm('POST.password')) {
-				$this->flash('Konfirmasi Password Tidak Cocok');
-				$f3->reroute($f3->get('URI'));
-			}
-			$seller->password = $pass;
-		}
-		$seller->save();
-		$this->flash('Berhasil Disimpan','success');
-		$f3->reroute('/home/admin/seller/'.$seller->id);
-	}
-
-	function Lock($f3) {
-		$seller = $this->loadSeller();
-		$seller->active = $f3->get('PARAMS.active');
-		$seller->save();
-		$this->flash('Berhasil Disimpan','success');
-		$f3->reroute('/home/admin/seller/'.$seller->id);
-	}
-
-	function Delete($f3) {
-		$seller = $this->loadSeller();
-		$seller->erase();
-		$this->flash('Seller Berhasil Dihapus','success');
-		$f3->reroute('/home/admin/seller/');
-	}
-
-	function Deposit($f3) {
-		$post 	= $f3->get('POST');
-		$seller = $this->seller;
-		$seller->load(array('id=?',$post['id']));
-		$seller->reroute('/home/admin/seller');
-		$seller->saldo = ($seller->saldo + $post['deposit']);
-		$seller->save();
-		$this->flash('Deposit Berhasil','success');
-		$f3->reroute('/home/admin/seller');
-	}
+    public function setKey($key){
+        if(ctype_xdigit($key) && strlen($key) === 64){
+            $this->key = $key;
+        }else{
+            trigger_error('Invalid key. Key must be a 32-byte (64 character) hexadecimal string.', E_USER_ERROR);
+        }
+    }
 
 }
+
